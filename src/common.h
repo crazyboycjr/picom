@@ -191,6 +191,9 @@ typedef struct session {
 
 	struct wm *wm;
 
+	/// Full-desktop zoom state.
+	struct zoom *zoom;
+
 	struct window_options window_options_default;
 
 	// === X extension related ===

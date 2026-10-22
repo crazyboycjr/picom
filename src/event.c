@@ -24,6 +24,7 @@
 #include "wm/defs.h"
 #include "wm/wm.h"
 #include "x.h"
+#include "zoom.h"
 
 /// Event handling with X is complicated. Handling events with other events possibly
 /// in-flight is no good. Because your internal state won't be up to date. Also, querying
@@ -547,6 +548,10 @@ static inline void ev_property_notify(session_t *ps, xcb_property_notify_event_t
 	if (ps->c.screen_info->root == ev->window) {
 		if (ps->o.use_ewmh_active_win && ps->atoms->a_NET_ACTIVE_WINDOW == ev->atom) {
 			ev_update_focused(ps);
+		} else if (ps->atoms->a_PICOM_ZOOM == ev->atom) {
+			if (zoom_update_target(ps->zoom)) {
+				queue_redraw(ps);
+			}
 		} else {
 			// Destroy the root "image" if the wallpaper probably changed
 			if (x_is_root_back_pixmap_atom(ps->atoms, ev->atom)) {

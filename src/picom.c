@@ -70,6 +70,7 @@
 #include "wm/defs.h"
 #include "wm/wm.h"
 #include "x.h"
+#include "zoom.h"
 
 /// Get session_t pointer from a pointer to a member of session_t
 #define session_ptr(ptr, member)                                                         \
@@ -829,6 +830,10 @@ static bool paint_preprocess(session_t *ps, bool *animation, struct win **out_bo
 		//
 		// (might not be the best naming.)
 		unredir_possible = true;
+	}
+	if (zoom_is_active(ps->zoom)) {
+		// Only a redirected screen can be zoomed, even over a fullscreen window.
+		unredir_possible = false;
 	}
 	if (unredir_possible) {
 		if (ps->redirected) {
@@ -1654,6 +1659,8 @@ static void draw_callback_impl(EV_P_ session_t *ps, int revents attr_unused) {
 	bool animation = false;
 	bool was_redirected = ps->redirected;
 	struct win *bottom = NULL;
+	// Before paint_preprocess, which keeps the screen redirected while zoomed.
+	zoom_step(ps->zoom);
 	if (!paint_preprocess(ps, &animation, &bottom)) {
 		log_fatal("Pre-render preparation has failed, exiting...");
 		exit(1);
@@ -1721,14 +1728,16 @@ static void draw_callback_impl(EV_P_ session_t *ps, int revents attr_unused) {
 		layout_manager_append_layout(
 		    ps->layout_manager, ps->wm, ps->root_image_generation,
 		    (ivec2){.width = ps->root_width, .height = ps->root_height});
+		struct renderer_zoom zoom;
+		bool zoomed = zoom_get_view(ps->zoom, &zoom);
 		bool succeeded = renderer_render(
 		    ps->renderer, ps->backend_data, ps->root_image, &ps->root_image_extent,
 		    ps->layout_manager, ps->command_builder, ps->backend_blur_context,
 		    render_start_us, ps->sync_fence, ps->o.use_damage, ps->o.monitor_repaint,
 		    ps->o.force_win_blend, ps->o.blur_background_frame,
 		    ps->o.inactive_dim_fixed, ps->o.max_brightness,
-		    ps->o.crop_shadow_to_monitor ? &ps->monitors : NULL,
-		    ps->root_pixmap_shader, ps->shaders, NULL, &after_damage_us);
+		    ps->o.crop_shadow_to_monitor ? &ps->monitors : NULL, ps->root_pixmap_shader,
+		    ps->shaders, zoomed ? &zoom : NULL, &after_damage_us);
 		if (!succeeded) {
 			log_fatal("Render failure");
 			abort();
@@ -1774,6 +1783,9 @@ static void draw_callback_impl(EV_P_ session_t *ps, int revents attr_unused) {
 		queue_redraw(ps);
 	} else {
 		ps->fade_time = 0L;
+	}
+	if (zoom_is_animating(ps->zoom)) {
+		queue_redraw(ps);
 	}
 	if (ps->vblank_scheduler && ps->backend_busy) {
 		// Even if we might not want to render during next vblank, we want to keep
@@ -2331,6 +2343,7 @@ static session_t *session_init(int argc, char **argv, Display *dpy,
 		}
 	}
 
+	ps->zoom = zoom_new(ps);
 	ps->pending_updates = true;
 
 	write_pid(ps);
@@ -2454,10 +2467,12 @@ static void session_destroy(session_t *ps) {
 	ev_signal_stop(ps->loop, &ps->usr1_signal);
 	ev_signal_stop(ps->loop, &ps->int_signal);
 
-	// The X connection could hold references to wm if there are pending async
-	// requests. Therefore the wm must be freed after the X connection.
+	// The X connection could hold references to wm and zoom if there are pending
+	// async requests. Therefore they must be freed after the X connection.
 	free_x_connection(&ps->c);
 	wm_free(ps->wm);
+	zoom_free(ps->zoom);
+	ps->zoom = NULL;
 }
 
 /**
