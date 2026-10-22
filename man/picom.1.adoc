@@ -933,6 +933,20 @@ SIGNALS
 
 * picom reinitializes itself upon receiving `SIGUSR1`.
 
+ZOOM
+----
+
+picom can magnify the whole screen around the pointer. The zoom level is set through the root window property `_PICOM_ZOOM`, of type `CARDINAL` and format 32, holding a single value: the zoom level in 16.16 fixed point, that is, multiplied by 65536. A missing property, or a value of at most 65536, means no zoom, and zoom levels above 16 are treated as 16. Typically a key or mouse binding of the window manager sets the property.
+
+The zoom level changes smoothly, and the point under the pointer stays where it is, so the zoomed view follows the pointer. The screen stays redirected while zoomed, even when *--unredir-if-possible* would unredirect it.
+
+* Zoom in to 2x, then back out:
++
+------------
+$ xprop -root -f _PICOM_ZOOM 32c -set _PICOM_ZOOM 131072
+$ xprop -root -remove _PICOM_ZOOM
+------------
+
 D-BUS API
 ---------
 
