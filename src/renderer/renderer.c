@@ -4,7 +4,9 @@
 #include "renderer.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <picom/backend.h>
+#include <test.h>
 #include <xcb/xcb_aux.h>
 
 #include "backend/backend.h"
@@ -14,6 +16,7 @@
 #include "layout.h"
 #include "picom.h"
 #include "utils/dynarr.h"
+#include "utils/misc.h"
 
 struct renderer {
 	/// Intermediate image to hold what will be presented to the back buffer.
@@ -42,6 +45,13 @@ struct renderer {
 
 	/// A dynarr of region_t for storing culled masks
 	region_t *culled_masks;
+
+	/// The part of `back_image` visible in a zoomed frame, copied out so the zoomed
+	/// blit works with small coordinates. Only allocated while zooming.
+	image_handle zoom_image;
+	/// For how many more frames the whole screen must be redrawn, because back
+	/// buffers may still hold zoomed pixels.
+	int zoom_cooldown;
 };
 
 void renderer_free(struct backend_base *backend, struct renderer *r) {
@@ -53,6 +63,9 @@ void renderer_free(struct backend_base *backend, struct renderer *r) {
 	}
 	if (r->back_image) {
 		backend->ops.release_image(backend, r->back_image);
+	}
+	if (r->zoom_image) {
+		backend->ops.release_image(backend, r->zoom_image);
 	}
 	if (r->monitor_repaint_pixel) {
 		backend->ops.release_image(backend, r->monitor_repaint_pixel);
@@ -144,6 +157,10 @@ renderer_set_root_size(struct renderer *r, struct backend_base *backend, ivec2 r
 	}
 	if (r->back_image) {
 		backend->ops.release_image(backend, r->back_image);
+	}
+	if (r->zoom_image) {
+		backend->ops.release_image(backend, r->zoom_image);
+		r->zoom_image = NULL;
 	}
 	if (r->back_buffer_copy) {
 		for (int i = 0; i < r->max_buffer_age; i++) {
@@ -422,6 +439,113 @@ void renderer_ensure_images_ready(struct renderer *r, struct backend_base *backe
 	}
 }
 
+/// Work out how a zoomed frame samples `back_image` along one axis of the screen.
+///
+/// Only the part of the screen visible when zoomed, `[*crop_start, *crop_end)` with a
+/// pixel of margin for the linear filter, gets magnified. Magnifying all of it would
+/// put its origin tens of thousands of pixels off screen, beyond the 16 bit
+/// coordinates of the X protocol that the xrender backend is bound by.
+///
+/// The point `center` should stay in place, so a point `q` of the unzoomed screen
+/// lands on `(q - center) * scale + center`. The origin of the crop on screen is
+/// rounded to whole pixels, then clamped so every screen pixel samples at least half
+/// a pixel inside the crop. Otherwise the linear filter would blend in whatever lies
+/// beyond the crop, at the screen edges where the crop has no margin.
+///
+/// @return where the magnified crop goes on the screen
+static int
+renderer_zoom_axis(int size, double scale, double center, int *crop_start, int *crop_end) {
+	center = fmin(fmax(center, 0.5), size - 0.5);
+	double view_start = center * (1 - 1 / scale);
+	*crop_start = max2(0, (int)floor(view_start) - 1);
+	*crop_end = min2(size, (int)ceil(view_start + size / scale) + 1);
+
+	double origin = round(*crop_start * scale - center * (scale - 1));
+	double lowest = ceil(size - 0.5 - (*crop_end - *crop_start - 0.5) * scale);
+	double highest = floor(-0.5 * (scale - 1));
+	// If no integer origin keeps both edges half a pixel in, which happens when
+	// scale is barely above 1, lowest is 0 and comes closest.
+	return (int)fmax(fmin(origin, highest), lowest);
+}
+
+TEST_CASE(renderer_zoom_axis) {
+	const int sizes[] = {2, 7, 640, 1080, 1920, 2160, 3840};
+	const double scales[] = {1.0001, 1.001, 1.01, 1.5, 2, 2.9, 4, 7.3, 16};
+	for (size_t k = 0; k < ARR_SIZE(sizes) * ARR_SIZE(scales); k++) {
+		int size = sizes[k / ARR_SIZE(scales)];
+		double scale = scales[k % ARR_SIZE(scales)];
+		// Where no integer origin keeps both edges in, allow what the fallback
+		// is off by.
+		double slack = (size - 0.5) * (scale - 1) < 1 ? 0.5 * (scale - 1) : 1e-9;
+		for (int p = 0; p < size; p++) {
+			double center = p + 0.5;
+			int start, end;
+			int origin = renderer_zoom_axis(size, scale, center, &start, &end);
+			TEST_TRUE(0 <= start && start < end && end <= size);
+
+			// The first and last pixels of the screen sample inside the crop.
+			TEST_TRUE((0.5 - origin) / scale >= 0.5 - slack);
+			TEST_TRUE((size - 0.5 - origin) / scale <= end - start - 0.5 + slack);
+
+			// The centre stays within a pixel of where it was, and within
+			// rounding when the crop has margins and nothing gets clamped.
+			double drift = fabs(origin + (center - start) * scale - center);
+			TEST_TRUE(drift <= 1 + 1e-9);
+			if (start > 0 && end < size) {
+				TEST_TRUE(drift <= 0.5 + 1e-9);
+			}
+
+			// Coordinates stay small.
+			TEST_TRUE(abs(origin) <= 3 * scale);
+			TEST_TRUE((end - start) * scale <= size + 4 * scale);
+		}
+	}
+}
+
+/// Magnify `r->back_image` onto the back buffer.
+static bool
+renderer_present_zoomed(struct renderer *r, struct backend_base *backend,
+                        const struct renderer_zoom *zoom, const region_t *screen_region) {
+	if (r->zoom_image == NULL) {
+		r->zoom_image = backend->ops.new_image(backend, r->format, r->canvas_size);
+		if (r->zoom_image == NULL) {
+			log_error("Failed to allocate the image for zooming");
+			return false;
+		}
+	}
+
+	ivec2 crop_start, crop_end, origin;
+	origin.x = renderer_zoom_axis(r->canvas_size.width, zoom->scale, zoom->center.x,
+	                              &crop_start.x, &crop_end.x);
+	origin.y = renderer_zoom_axis(r->canvas_size.height, zoom->scale, zoom->center.y,
+	                              &crop_start.y, &crop_end.y);
+	auto crop_size = ivec2_sub(crop_end, crop_start);
+
+	region_t crop_region;
+	pixman_region32_init_rect(&crop_region, 0, 0, (unsigned)crop_size.width,
+	                          (unsigned)crop_size.height);
+	struct backend_blit_args blit = {
+	    .source_image = r->back_image,
+	    .target_mask = &crop_region,
+	    .effective_size = r->canvas_size,
+	    .tint = {1, 1, 1, 1},
+	    .max_brightness = 1,
+	    .scale = SCALE_IDENTITY,
+	};
+	bool succeeded =
+	    backend->ops.blit(backend, ivec2_neg(crop_start), r->zoom_image, &blit);
+	pixman_region32_fini(&crop_region);
+	if (!succeeded) {
+		return false;
+	}
+
+	blit.source_image = r->zoom_image;
+	blit.target_mask = screen_region;
+	blit.effective_size = crop_size;
+	blit.scale = (vec2){zoom->scale, zoom->scale};
+	return backend->ops.blit(backend, origin, backend->ops.back_buffer(backend), &blit);
+}
+
 /// @return true if a frame is rendered, false if this frame is skipped.
 bool renderer_render(struct renderer *r, struct backend_base *backend,
                      image_handle root_image, const rect_t *root_image_extent,
@@ -431,7 +555,8 @@ bool renderer_render(struct renderer *r, struct backend_base *backend,
                      bool force_blend, bool blur_frame, bool inactive_dim_fixed,
                      double max_brightness, const struct x_monitors *monitors,
                      const struct shader_info *root_pixmap_shader,
-                     const struct shader_info *shaders, uint64_t *after_damage_us) {
+                     const struct shader_info *shaders, const struct renderer_zoom *zoom,
+                     uint64_t *after_damage_us) {
 	if (xsync_fence != XCB_NONE) {
 		// Trigger the fence but don't immediately wait on it. Let it run
 		// concurrent with our CPU tasks to save time.
@@ -481,6 +606,14 @@ bool renderer_render(struct renderer *r, struct backend_base *backend,
 	}
 	auto buffer_age =
 	    (use_damage || monitor_repaint) ? backend->ops.buffer_age(backend) : 0;
+	if (zoom != NULL || r->zoom_cooldown > 0) {
+		// A zoomed frame shows all of `back_image`, which is only up to date
+		// inside the damage: blur makes us render the layers below a blurred
+		// window around the damage without the window itself, and monitor
+		// repaint leaves its tint behind. After zooming, the back buffers hold
+		// zoomed pixels. So render and present everything.
+		buffer_age = 0;
+	}
 	if (buffer_age > 0 && global_debug_options.consistent_buffer_age &&
 	    buffer_age < r->max_buffer_age) {
 		int past_frame =
@@ -558,8 +691,20 @@ bool renderer_render(struct renderer *r, struct backend_base *backend,
 		backend->ops.blit(backend, (ivec2){}, r->back_image, &blit);
 	}
 
-	backend->ops.copy_area_quantize(backend, (ivec2){}, backend->ops.back_buffer(backend),
-	                                r->back_image, &damage_region);
+	if (zoom != NULL && renderer_present_zoomed(r, backend, zoom, &screen_region)) {
+		r->zoom_cooldown = r->max_buffer_age;
+	} else {
+		backend->ops.copy_area_quantize(backend, (ivec2){},
+		                                backend->ops.back_buffer(backend),
+		                                r->back_image, &damage_region);
+		if (r->zoom_cooldown > 0) {
+			r->zoom_cooldown--;
+		}
+		if (zoom == NULL && r->zoom_image != NULL) {
+			backend->ops.release_image(backend, r->zoom_image);
+			r->zoom_image = NULL;
+		}
+	}
 
 	if (global_debug_options.consistent_buffer_age) {
 		region_t region;
