@@ -720,7 +720,7 @@ bool parse_config(options_t *opt, const char *config_file) {
 	    .invert_color_list = NULL,
 	    .opacity_rules = NULL,
 	    .max_brightness = 1.0,
-	    .zoom_filter = SCALE_FILTER_LINEAR,
+	    .zoom_filter = SCALE_FILTER_NEAREST,
 
 	    .use_ewmh_active_win = false,
 	    .focus_blacklist = NULL,

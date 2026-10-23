@@ -256,7 +256,7 @@ May also be one of the predefined kernels: `3x3box` (default), `5x5box`, `7x7box
 	Dimming bright windows so their brightness doesn't exceed this set value. Brightness of a window is estimated by averaging all pixels in the window, so this could comes with a performance hit. Setting this to 1.0 disables this behaviour. Requires *--use-damage* to be disabled. (default: 1.0)
 
 *--zoom-filter* _FILTER_::
-	How the screen is magnified while it is zoomed, see the xref:_zoom[*ZOOM*] section: `linear` for a smooth picture, or `nearest` to show every pixel as a sharp block. (default: linear)
+	How the screen is magnified while it is zoomed, see the xref:_zoom[*ZOOM*] section: `nearest` to show every pixel as a sharp block, or `linear` for a smooth picture. (default: nearest)
 
 *--transparent-clipping*::
 	Make transparent windows clip other windows like non-transparent windows do, instead of blending on top of them.
@@ -943,7 +943,7 @@ picom can magnify the whole screen around the pointer. The zoom level is set thr
 
 The zoom level changes smoothly, and the point under the pointer stays where it is, so the zoomed view follows the pointer. The screen stays redirected while zoomed, even when *--unredir-if-possible* would unredirect it.
 
-The magnified screen is smoothed by default. With *--zoom-filter* `nearest`, every pixel becomes a sharp block instead, which shows exactly what is drawn, pixel for pixel.
+By default every pixel of the magnified screen becomes a sharp block, which shows exactly what is drawn, pixel for pixel. With *--zoom-filter* `linear`, the magnified screen is smoothed instead.
 
 picom itself grabs no input; bind the zoom in the window manager or a hotkey daemon. A binding on a modifier plus the mouse wheel has one catch: X delivers each wheel notch to XI2 clients as smooth-scroll motion before the emulated button press that activates a passive grab, so the window under the pointer scrolls along with the zoom. A window manager avoids this by grabbing the pointer as soon as the modifier is pressed, which costs applications nothing for a modifier whose mouse bindings the window manager owns anyway, such as Super.
 
