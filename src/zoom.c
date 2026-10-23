@@ -163,6 +163,7 @@ bool zoom_get_view(const struct zoom *zoom, struct renderer_zoom *view) {
 	*view = (struct renderer_zoom){
 	    .scale = zoom->current,
 	    .center = {.x = zoom->pointer.x + 0.5, .y = zoom->pointer.y + 0.5},
+	    .filter = zoom->ps->o.zoom_filter,
 	};
 	return true;
 }

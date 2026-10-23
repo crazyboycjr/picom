@@ -127,6 +127,14 @@ set_picture_scale(struct x_connection *c, xcb_render_picture_t picture, vec2 sca
 	x_set_error_action_abort(c, xcb_render_set_picture_transform(c->c, picture, transform));
 }
 
+/// Set the filter `picture` is sampled with when transformed. X Render's default is
+/// "nearest".
+static void
+set_picture_filter(struct x_connection *c, xcb_render_picture_t picture, const char *filter) {
+	xcb_render_set_picture_filter(c->c, picture, to_u16_checked(strlen(filter)),
+	                              filter, 0, NULL);
+}
+
 /// Make a picture of size width x height, which has a rounded rectangle of corner_radius
 /// rendered in it.
 struct xrender_rounded_rectangle_cache *
@@ -326,6 +334,9 @@ static bool xrender_blit(struct backend_base *base, ivec2 origin,
 	auto const tmph = to_u16_checked(inner->size.height);
 	auto const tmpew = to_u16_saturated(args->effective_size.width * args->scale.x);
 	auto const tmpeh = to_u16_saturated(args->effective_size.height * args->scale.y);
+	// Scaled pictures are sampled nearest-neighbour unless bilinear is asked for
+	bool bilinear = args->scale_filter == SCALE_FILTER_LINEAR &&
+	                !vec2_eq(args->scale, SCALE_IDENTITY);
 	const xcb_render_color_t tint_color = {
 	    .red = (uint16_t)(tint.red * 0xffff),
 	    .green = (uint16_t)(tint.green * 0xffff),
@@ -482,6 +493,9 @@ static bool xrender_blit(struct backend_base *base, ivec2 origin,
 		}
 
 		set_picture_scale(xd->base.c, tmp_pict, args->scale);
+		if (bilinear) {
+			set_picture_filter(xd->base.c, tmp_pict, "bilinear");
+		}
 		// Transformations don't affect the picture's clip region, so we need to
 		// set it again
 		x_set_picture_clip_region(xd->base.c, tmp_pict, to_i16_checked(-origin.x),
@@ -496,11 +510,18 @@ static bool xrender_blit(struct backend_base *base, ivec2 origin,
 		uint8_t op = (has_alpha ? XCB_RENDER_PICT_OP_OVER : XCB_RENDER_PICT_OP_SRC);
 
 		set_picture_scale(xd->base.c, inner->pict, args->scale);
+		if (bilinear) {
+			set_picture_filter(xd->base.c, inner->pict, "bilinear");
+		}
 
 		xcb_render_composite(xd->base.c->c, op, inner->pict, mask_pict,
 		                     target->pict, 0, 0, mask_pict_dst_x, mask_pict_dst_y,
 		                     to_i16_checked(origin.x), to_i16_checked(origin.y),
 		                     tmpew, tmpeh);
+		if (bilinear) {
+			// The picture keeps its filter, so restore the default
+			set_picture_filter(xd->base.c, inner->pict, "nearest");
+		}
 		if (args->color_inverted) {
 			// Apply properties, if we reach here, then has_alpha == false
 			assert(!has_alpha);

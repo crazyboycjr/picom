@@ -464,6 +464,8 @@ typedef struct options {
 	struct list_node opacity_rules;
 	/// Limit window brightness
 	double max_brightness;
+	/// How the screen is magnified while it is zoomed.
+	enum scale_filter zoom_filter;
 	// Radius of rounded window corners
 	int corner_radius;
 	/// Rounded corners blacklist. A linked list of conditions.
@@ -544,6 +546,7 @@ void *parse_numeric_prefix(const char *src, const char **end, void *user_data);
 char *must_use locate_auxiliary_file(const char *scope, const char *path,
                                      const char *include_dir);
 int must_use parse_blur_method(const char *src);
+int must_use parse_zoom_filter(const char *src);
 void parse_debug_options(struct debug_options *);
 
 const char *xdg_config_home(void);

@@ -165,6 +165,8 @@ struct backend_blit_args {
 	int border_width;
 	/// Whether the source image should be inverted.
 	bool color_inverted;
+	/// How the source image is sampled when `scale` is not 1.
+	enum scale_filter scale_filter;
 };
 
 enum backend_image_format {

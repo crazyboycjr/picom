@@ -543,6 +543,7 @@ renderer_present_zoomed(struct renderer *r, struct backend_base *backend,
 	blit.target_mask = screen_region;
 	blit.effective_size = crop_size;
 	blit.scale = (vec2){zoom->scale, zoom->scale};
+	blit.scale_filter = zoom->filter;
 	return backend->ops.blit(backend, origin, backend->ops.back_buffer(backend), &blit);
 }
 

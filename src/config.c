@@ -197,6 +197,16 @@ int parse_blur_method(const char *src) {
 	return BLUR_METHOD_INVALID;
 }
 
+int parse_zoom_filter(const char *src) {
+	if (strcmp(src, "linear") == 0) {
+		return SCALE_FILTER_LINEAR;
+	}
+	if (strcmp(src, "nearest") == 0) {
+		return SCALE_FILTER_NEAREST;
+	}
+	return SCALE_FILTER_INVALID;
+}
+
 /**
  * Parse a matrix.
  *
@@ -710,6 +720,7 @@ bool parse_config(options_t *opt, const char *config_file) {
 	    .invert_color_list = NULL,
 	    .opacity_rules = NULL,
 	    .max_brightness = 1.0,
+	    .zoom_filter = SCALE_FILTER_LINEAR,
 
 	    .use_ewmh_active_win = false,
 	    .focus_blacklist = NULL,

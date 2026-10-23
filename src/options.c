@@ -544,6 +544,9 @@ static const struct picom_option picom_options[] = {
     [328] = {"blur-method", PARSE_WITH(parse_blur_method, BLUR_METHOD_INVALID, blur_method),
              "The algorithm used for background bluring. Available choices are: 'none' to disable, 'gaussian', "
 	     "'box' or 'kernel' for custom convolution blur with --blur-kern."},
+    [345] = {"zoom-filter", PARSE_WITH(parse_zoom_filter, SCALE_FILTER_INVALID, zoom_filter),
+             "How the screen is magnified when zoomed through the _PICOM_ZOOM root window property: "
+             "'linear' for a smooth picture (the default) or 'nearest' for sharp pixels."},
 
     // Deprecated options
     [269] = {"refresh-rate"       , WARN_DEPRECATED(IGNORE(required_argument))},

@@ -25,6 +25,8 @@ struct renderer_zoom {
 	double scale;
 	/// The point of the screen that stays in place, in screen coordinates.
 	vec2 center;
+	/// How the screen is magnified.
+	enum scale_filter filter;
 };
 
 void renderer_free(struct backend_base *backend, struct renderer *r);

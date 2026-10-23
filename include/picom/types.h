@@ -19,6 +19,18 @@ enum blur_method {
 	BLUR_METHOD_INVALID,
 };
 
+/// How an image is sampled when it is drawn scaled.
+enum scale_filter {
+	/// The backend's own choice: bilinear for the OpenGL backends, nearest-neighbour
+	/// for xrender.
+	SCALE_FILTER_DEFAULT = 0,
+	/// Bilinear interpolation, smooth.
+	SCALE_FILTER_LINEAR,
+	/// Nearest-neighbour, every source pixel becomes a sharp block.
+	SCALE_FILTER_NEAREST,
+	SCALE_FILTER_INVALID,
+};
+
 /// Enumeration type to represent switches.
 typedef enum {
 	OFF = 0,        // false

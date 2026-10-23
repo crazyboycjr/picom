@@ -1221,6 +1221,16 @@ bool parse_config_libconfig(options_t *opt, const char *config_file) { /*NOLINT(
 		opt->max_brightness = 1.0;
 	}
 
+	// --zoom-filter
+	if (config_lookup_string(&cfg, "zoom-filter", &sval)) {
+		int filter = parse_zoom_filter(sval);
+		if (filter >= SCALE_FILTER_INVALID) {
+			log_fatal("Invalid zoom filter %s", sval);
+			goto out;
+		}
+		opt->zoom_filter = (enum scale_filter)filter;
+	}
+
 	// --window-shader-fg
 	subcfg = config_lookup(&cfg, "window-shader-fg");
 	if (subcfg) {
